@@ -13,6 +13,18 @@ CPU 12%     GPU 8%      内存 43%
 
 ![卡片样式](preview-card.png)
 
+## 说明
+
+这个项目是**学习 AI 编程过程中的练习产物**：需求由我提出、方向由我判断，具体代码由 AI 辅助生成，我负责验证和调整。
+
+界面形式和产品思路**借鉴自 [Traffic Monitor](https://github.com/zhongyang219/TrafficMonitor)**（作者 [zhongyang219](https://github.com/zhongyang219)，GPL-3.0）。任务栏内嵌显示、多项指标并排、样式与配色自定义这些设定，都来自它。
+
+- 本项目**没有复用 Traffic Monitor 的任何源码**。全部代码是用 C# 重新写的（WinForms + 分层窗口自绘），技术栈和实现方式与原项目无关。
+- 功能完整度、稳定性和性能都远不如原项目。日常使用**强烈建议直接用 Traffic Monitor**，本项目只适合当作学习参考。
+- 向 zhongyang219 致敬 —— Traffic Monitor 在这个品类里做得非常扎实，是这个项目的灵感来源。
+
+仅供学习交流，严禁用于商业用途，请于 24 小时内删除。
+
 ## 功能
 
 - CPU、GPU、内存、磁盘活动率，以及上传、下载、上下行三个独立的网络指标；默认每 1 秒刷新。

@@ -1054,6 +1054,17 @@ namespace TaskbarMetrics
             intro.Margin = new Padding(0, 0, 0, 10);
             page.Controls.Add(intro);
 
+            // 说明来源：文字会长到自动折行，用 MaximumSize 让它自己算高度，避免被裁掉。
+            Label origin = new Label();
+            origin.Text = "本项目是学习 AI 编程过程中的练习产物：需求由我提出，代码由 AI 辅助生成。\n"
+                + "界面与产品思路借鉴自 Traffic Monitor（作者 zhongyang219，GPL-3.0），未复用其任何源码。\n"
+                + "日常使用建议直接用 Traffic Monitor，本项目只适合作学习参考。";
+            origin.AutoSize = true;
+            origin.MaximumSize = new Size(ContentWidth, 0);
+            origin.ForeColor = HintColor;
+            origin.Margin = new Padding(0, 0, 0, 12);
+            page.Controls.Add(origin);
+
             _aboutLabel = new Label();
             _aboutLabel.AutoSize = false;
             _aboutLabel.Width = ContentWidth;
