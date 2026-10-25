@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -553,19 +554,33 @@ namespace TaskbarMetrics
     {
         const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         const string ValueName = "TaskbarMetrics";
+        const string LinkName = "TaskbarMetrics.lnk";
 
-        public static bool IsEnabled()
+        // 注册表启动项被安全软件拦截时的备用方案：当前用户的「启动」文件夹快捷方式。
+        static string StartupFolder()
         {
             try
             {
-                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RunKey, false))
-                {
-                    if (key == null) return false;
-                    string value = key.GetValue(ValueName) as string;
-                    if (string.IsNullOrEmpty(value)) return false;
-                    return string.Equals(value.Trim().Trim('"'), Application.ExecutablePath,
-                        StringComparison.OrdinalIgnoreCase);
-                }
+                return Environment.GetFolderPath(Environment.SpecialFolder.Startup);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        static string ShortcutPath()
+        {
+            string folder = StartupFolder();
+            return string.IsNullOrEmpty(folder) ? null : Path.Combine(folder, LinkName);
+        }
+
+        public static bool HasStartupShortcut()
+        {
+            try
+            {
+                string path = ShortcutPath();
+                return !string.IsNullOrEmpty(path) && File.Exists(path);
             }
             catch
             {
@@ -573,20 +588,142 @@ namespace TaskbarMetrics
             }
         }
 
-        public static void SetEnabled(bool enabled)
+        static bool TryCreateShortcut()
         {
-            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RunKey, true))
+            string path = ShortcutPath();
+            if (string.IsNullOrEmpty(path)) return false;
+            try
             {
-                if (key == null) throw new InvalidOperationException("无法打开当前用户的启动项注册表。");
-                if (enabled)
+                string folder = Path.GetDirectoryName(path);
+                if (!Directory.Exists(folder)) Directory.CreateDirectory(folder);
+
+                Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+                if (shellType == null) return false;
+                object shell = Activator.CreateInstance(shellType);
+                object link = shellType.InvokeMember("CreateShortcut",
+                    BindingFlags.InvokeMethod, null, shell, new object[] { path });
+                Type linkType = link.GetType();
+                linkType.InvokeMember("TargetPath", BindingFlags.SetProperty, null, link,
+                    new object[] { Application.ExecutablePath });
+                linkType.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, link,
+                    new object[] { Application.StartupPath });
+                linkType.InvokeMember("Description", BindingFlags.SetProperty, null, link,
+                    new object[] { "任务栏性能监控" });
+                linkType.InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
+                return File.Exists(path);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("创建启动文件夹快捷方式失败", ex);
+                return false;
+            }
+        }
+
+        static void DeleteShortcut()
+        {
+            try
+            {
+                string path = ShortcutPath();
+                if (!string.IsNullOrEmpty(path) && File.Exists(path)) File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("删除启动文件夹快捷方式失败", ex);
+            }
+        }
+
+        public static bool IsEnabled()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RunKey, false))
                 {
-                    key.SetValue(ValueName, "\"" + Application.ExecutablePath + "\"", RegistryValueKind.String);
-                }
-                else
-                {
-                    if (key.GetValue(ValueName) != null) key.DeleteValue(ValueName, false);
+                    if (key != null)
+                    {
+                        string value = key.GetValue(ValueName) as string;
+                        if (!string.IsNullOrEmpty(value) &&
+                            string.Equals(value.Trim().Trim('"'), Application.ExecutablePath,
+                                StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
                 }
             }
+            catch
+            {
+            }
+            return HasStartupShortcut();
+        }
+
+        // 返回实际使用的自启动方式，供界面提示。
+        public static string Method()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RunKey, false))
+                {
+                    if (key != null)
+                    {
+                        string value = key.GetValue(ValueName) as string;
+                        if (!string.IsNullOrEmpty(value) &&
+                            string.Equals(value.Trim().Trim('"'), Application.ExecutablePath,
+                                StringComparison.OrdinalIgnoreCase))
+                            return "注册表启动项";
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return HasStartupShortcut() ? "启动文件夹" : "";
+        }
+
+        public static void SetEnabled(bool enabled)
+        {
+            if (!enabled)
+            {
+                try
+                {
+                    using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RunKey, true))
+                    {
+                        if (key != null && key.GetValue(ValueName) != null) key.DeleteValue(ValueName, false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error("删除开机自启动注册表项失败", ex);
+                }
+                DeleteShortcut();
+                return;
+            }
+
+            // 首选注册表启动项；被安全软件拦截时自动改用「启动」文件夹快捷方式。
+            Exception registryError = null;
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RunKey, true))
+                {
+                    if (key == null) throw new InvalidOperationException("无法打开当前用户的启动项注册表。");
+                    key.SetValue(ValueName, "\"" + Application.ExecutablePath + "\"", RegistryValueKind.String);
+                }
+                DeleteShortcut();
+                return;
+            }
+            catch (Exception ex)
+            {
+                registryError = ex;
+                AppLog.Error("写入开机自启动注册表项失败，改用启动文件夹", ex);
+            }
+
+            if (TryCreateShortcut()) return;
+
+            string folder = StartupFolder();
+            throw new InvalidOperationException(
+                "开机自启动被安全软件拦截，注册表启动项和「启动」文件夹两种方式都没能写入。" +
+                (registryError != null ? "\n\n注册表错误：" + registryError.Message : "") +
+                "\n\n可以这样做：\n" +
+                "1. 在安全软件（火绒 / 360 / 电脑管家等）的「启动项防护」里允许 TaskbarMetrics 修改启动项；\n" +
+                "2. 或手动把程序快捷方式放进启动文件夹：" + (folder ?? "（未找到）") + "\n" +
+                "3. 或用系统「任务计划程序」创建一条登录时运行的任务。");
         }
     }
 

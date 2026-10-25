@@ -27,6 +27,14 @@ namespace TaskbarMetrics
                 return;
             }
 
+            // 开发用：--autostart on|off|status，验证开机自启动的两种落盘方式。
+            if (args != null && args.Length >= 2 &&
+                string.Equals(args[0], "--autostart", StringComparison.OrdinalIgnoreCase))
+            {
+                AutoStartProbe(args[1]);
+                return;
+            }
+
             bool createdNew = false;
             using (Mutex mutex = new Mutex(true, @"Local\TaskbarMetrics.Widget", out createdNew))
             {
@@ -115,6 +123,29 @@ namespace TaskbarMetrics
                     bitmap.Save(path, ImageFormat.Png);
                 }
                 dialog.Hide();
+            }
+        }
+
+        static void AutoStartProbe(string mode)
+        {
+            Application.EnableVisualStyles();
+            try
+            {
+                if (string.Equals(mode, "on", StringComparison.OrdinalIgnoreCase))
+                {
+                    AutoStart.SetEnabled(true);
+                    AppLog.Info("autostart: enabled, method=" + AutoStart.Method());
+                }
+                else if (string.Equals(mode, "off", StringComparison.OrdinalIgnoreCase))
+                {
+                    AutoStart.SetEnabled(false);
+                    AppLog.Info("autostart: disabled");
+                }
+                AppLog.Info("autostart status: enabled=" + AutoStart.IsEnabled() + " method=" + AutoStart.Method());
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("autostart failed: " + mode, ex);
             }
         }
 
