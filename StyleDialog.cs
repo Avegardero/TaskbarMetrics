@@ -50,6 +50,8 @@ namespace TaskbarMetrics
 
         CheckBox _autoStartCheck;
         Label _dirLabel;
+        Label _exeLabel;
+        bool _movingProgram;
         CheckBox _follow;
         CheckBox _transparent;
         CheckBox[] _visibilityChecks;
@@ -336,6 +338,45 @@ namespace TaskbarMetrics
             page.Controls.Add(Hint("settings.ini、日志和背景图都放在这里。"));
             page.Controls.Add(Hint("换目录后点“保存”才真正切换。"));
 
+            page.Controls.Add(Header("程序文件位置"));
+
+            _exeLabel = new Label();
+            _exeLabel.AutoSize = false;
+            _exeLabel.Width = ContentWidth;
+            _exeLabel.Height = 24;
+            _exeLabel.AutoEllipsis = true;
+            _exeLabel.TextAlign = ContentAlignment.MiddleLeft;
+            _exeLabel.ForeColor = Color.FromArgb(64, 64, 64);
+            _exeLabel.Margin = new Padding(0, 0, 0, 6);
+            _exeLabel.Text = Application.ExecutablePath;
+            page.Controls.Add(_exeLabel);
+
+            FlowLayoutPanel exeRow = new FlowLayoutPanel();
+            exeRow.FlowDirection = FlowDirection.LeftToRight;
+            exeRow.WrapContents = false;
+            exeRow.AutoSize = true;
+            exeRow.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            exeRow.Margin = new Padding(0, 0, 0, 6);
+            Button moveExe = new Button();
+            moveExe.Text = "选择文件夹...";
+            moveExe.Width = 118;
+            moveExe.Height = 30;
+            moveExe.Margin = new Padding(0, 0, 8, 0);
+            moveExe.FlatStyle = FlatStyle.System;
+            moveExe.Click += delegate { ChooseProgramDirectory(); };
+            exeRow.Controls.Add(moveExe);
+            Button revealExe = new Button();
+            revealExe.Text = "打开所在目录";
+            revealExe.Width = 108;
+            revealExe.Height = 30;
+            revealExe.FlatStyle = FlatStyle.System;
+            revealExe.Click += delegate { RevealProgramFile(); };
+            exeRow.Controls.Add(revealExe);
+            page.Controls.Add(exeRow);
+
+            page.Controls.Add(Hint("把程序本身复制到你选的目录，开机自启动会跟着指向新位置。"));
+            page.Controls.Add(Hint("复制后程序会从新位置重新启动，旧的那份文件需要你手动删除。"));
+
             page.Controls.Add(Header("重置"));
             FlowLayoutPanel resetRow = new FlowLayoutPanel();
             resetRow.FlowDirection = FlowDirection.LeftToRight;
@@ -375,14 +416,14 @@ namespace TaskbarMetrics
                 dialog.SelectedPath = _draft.DataDirectory;
                 if (dialog.ShowDialog(this) != DialogResult.OK) return;
                 string dir = dialog.SelectedPath;
-                if (!CanWrite(dir)) return;
+                if (!CanWrite(dir, "配置文件目录")) return;
                 _draft.DataDirectory = dir;
                 _dirLabel.Text = dir;
                 MarkDirty();
             }
         }
 
-        bool CanWrite(string dir)
+        bool CanWrite(string dir, string what)
         {
             try
             {
@@ -394,11 +435,11 @@ namespace TaskbarMetrics
             }
             catch (Exception ex)
             {
-                AppLog.Error("Config directory not writable: " + dir, ex);
+                AppLog.Error(what + " 不可写: " + dir, ex);
                 MessageBox.Show("这个目录不可写：\n" + dir + "\n\n" + ex.Message
                     + "\n\n常见原因：安全软件或系统「受控文件夹访问」拦截了本程序对桌面/文档等位置的写入。"
                     + "\n可以换一个普通目录（例如 D:\\Tools\\TaskbarMetrics），或在安全软件里放行本程序。"
-                    + "\n目录没有改动，仍是原来的位置。",
+                    + "\n" + what + "没有改动，仍是原来的位置。",
                     "任务栏性能", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return false;
             }
@@ -414,6 +455,120 @@ namespace TaskbarMetrics
             catch (Exception ex)
             {
                 MessageBox.Show("无法打开目录：\n" + ex.Message, "任务栏性能",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        // 把程序本体复制到用户选的目录，把自启动指向新位置，然后从新位置重新启动。
+        void ChooseProgramDirectory()
+        {
+            string currentExe = Application.ExecutablePath;
+            string currentDir = Application.StartupPath;
+
+            using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+            {
+                dialog.Description = "选择程序文件要放到的目录";
+                dialog.ShowNewFolderButton = true;
+                dialog.SelectedPath = currentDir;
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+                string targetDir = dialog.SelectedPath;
+                try
+                {
+                    targetDir = Path.GetFullPath(targetDir);
+                }
+                catch
+                {
+                }
+
+                if (string.Equals(targetDir.TrimEnd('\\'), Path.GetFullPath(currentDir).TrimEnd('\\'),
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show(this, "程序已经在这个目录里了，不需要移动。", "程序文件位置",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                string newExe = Path.Combine(targetDir, Path.GetFileName(currentExe));
+
+                DialogResult answer = MessageBox.Show(this,
+                    "把程序复制到：\n" + newExe + "\n\n"
+                    + "· 开机自启动会跟着指向新位置；\n"
+                    + "· 复制完成后程序从新位置重新启动；\n"
+                    + "· 旧的那份文件需要你自己删除。\n\n继续吗？",
+                    "移动程序文件", MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
+                if (answer != DialogResult.OK) return;
+
+                if (!CanWrite(targetDir, "程序文件")) return;
+
+                try
+                {
+                    ProgramMover.CopyTo(targetDir);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error("复制程序到新位置失败: " + newExe, ex);
+                    MessageBox.Show(this, "复制程序失败：\n" + ex.Message
+                        + "\n\n如果目标目录里已经有同名程序且正在运行，请先关掉它再试。",
+                        "程序文件位置", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                string autoStartNote;
+                if (AutoStart.IsEnabled())
+                {
+                    try
+                    {
+                        AutoStart.SetEnabledAt(true, newExe);
+                        autoStartNote = "开机自启动已指向新位置。";
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLog.Error("移动后更新开机自启动失败: " + newExe, ex);
+                        autoStartNote = "开机自启动没能改到新位置：\n" + ex.Message;
+                    }
+                }
+                else
+                {
+                    autoStartNote = "当前没有开启开机自启动，不需要改启动项。";
+                }
+
+                // 未保存的设置先落盘，避免重启后回退。
+                if (_dirty) ApplyDraft();
+
+                // 本进程退出会释放单实例互斥体，所以延后 2 秒再启动新位置。
+                try
+                {
+                    ProgramMover.ScheduleRestart(newExe, 2);
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Error("从新位置重新启动失败: " + newExe, ex);
+                    MessageBox.Show(this, "程序已复制到新位置，但没能自动启动它：\n" + ex.Message
+                        + "\n\n请手动打开：\n" + newExe,
+                        "程序文件位置", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                MessageBox.Show(this, "已复制到：\n" + newExe + "\n\n" + autoStartNote
+                    + "\n\n点击确定后当前程序退出，约 2 秒后从新位置启动。",
+                    "程序文件位置", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+                _movingProgram = true;
+                Application.Exit();
+            }
+        }
+
+        void RevealProgramFile()
+        {
+            try
+            {
+                System.Diagnostics.Process.Start("explorer.exe",
+                    "/select,\"" + Application.ExecutablePath + "\"");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "无法打开所在目录：\n" + ex.Message, "程序文件位置",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
@@ -1397,6 +1552,13 @@ namespace TaskbarMetrics
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            // 移动程序文件时会主动退出，改动已经在前面提交，这里不再弹保存提示。
+            if (_movingProgram)
+            {
+                base.OnFormClosing(e);
+                return;
+            }
+
             if (_dirty)
             {
                 DialogResult answer = MessageBox.Show(

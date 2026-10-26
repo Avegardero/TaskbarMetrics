@@ -27,6 +27,14 @@ namespace TaskbarMetrics
                 return;
             }
 
+            // 开发用：--moveprogram <目录>，验证「复制程序 + 自启动改指向」（不重启）。
+            if (args != null && args.Length >= 2 &&
+                string.Equals(args[0], "--moveprogram", StringComparison.OrdinalIgnoreCase))
+            {
+                MoveProgramProbe(args[1]);
+                return;
+            }
+
             // 开发用：--autostart on|off|status，验证开机自启动的两种落盘方式。
             if (args != null && args.Length >= 2 &&
                 string.Equals(args[0], "--autostart", StringComparison.OrdinalIgnoreCase))
@@ -123,6 +131,22 @@ namespace TaskbarMetrics
                     bitmap.Save(path, ImageFormat.Png);
                 }
                 dialog.Hide();
+            }
+        }
+
+        static void MoveProgramProbe(string targetDir)
+        {
+            try
+            {
+                string newExe = ProgramMover.CopyTo(targetDir);
+                AppLog.Info("moveprogram: copied to " + newExe);
+                ProgramMover.RepointAutoStart(newExe);
+                AppLog.Info("moveprogram: autostart repointed to " + newExe
+                    + " (self-enabled=" + AutoStart.IsEnabled() + ")");
+            }
+            catch (Exception ex)
+            {
+                AppLog.Error("moveprogram failed: " + targetDir, ex);
             }
         }
 

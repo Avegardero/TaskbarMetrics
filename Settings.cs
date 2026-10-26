@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
@@ -588,8 +589,9 @@ namespace TaskbarMetrics
             }
         }
 
-        static bool TryCreateShortcut()
+        static bool TryCreateShortcut(string exePath)
         {
+            if (string.IsNullOrEmpty(exePath)) exePath = Application.ExecutablePath;
             string path = ShortcutPath();
             if (string.IsNullOrEmpty(path)) return false;
             try
@@ -604,9 +606,9 @@ namespace TaskbarMetrics
                     BindingFlags.InvokeMethod, null, shell, new object[] { path });
                 Type linkType = link.GetType();
                 linkType.InvokeMember("TargetPath", BindingFlags.SetProperty, null, link,
-                    new object[] { Application.ExecutablePath });
+                    new object[] { exePath });
                 linkType.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, link,
-                    new object[] { Application.StartupPath });
+                    new object[] { Path.GetDirectoryName(exePath) });
                 linkType.InvokeMember("Description", BindingFlags.SetProperty, null, link,
                     new object[] { "任务栏性能监控" });
                 linkType.InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
@@ -679,6 +681,14 @@ namespace TaskbarMetrics
 
         public static void SetEnabled(bool enabled)
         {
+            SetEnabledAt(enabled, Application.ExecutablePath);
+        }
+
+        // exePath 为空时指向当前运行的这份程序；移动程序文件后会传新路径进来。
+        public static void SetEnabledAt(bool enabled, string exePath)
+        {
+            if (string.IsNullOrEmpty(exePath)) exePath = Application.ExecutablePath;
+
             if (!enabled)
             {
                 try
@@ -703,7 +713,7 @@ namespace TaskbarMetrics
                 using (RegistryKey key = Registry.CurrentUser.OpenSubKey(RunKey, true))
                 {
                     if (key == null) throw new InvalidOperationException("无法打开当前用户的启动项注册表。");
-                    key.SetValue(ValueName, "\"" + Application.ExecutablePath + "\"", RegistryValueKind.String);
+                    key.SetValue(ValueName, "\"" + exePath + "\"", RegistryValueKind.String);
                 }
                 DeleteShortcut();
                 return;
@@ -714,7 +724,7 @@ namespace TaskbarMetrics
                 AppLog.Error("写入开机自启动注册表项失败，改用启动文件夹", ex);
             }
 
-            if (TryCreateShortcut()) return;
+            if (TryCreateShortcut(exePath)) return;
 
             string folder = StartupFolder();
             throw new InvalidOperationException(
@@ -724,6 +734,43 @@ namespace TaskbarMetrics
                 "1. 在安全软件（火绒 / 360 / 电脑管家等）的「启动项防护」里允许 TaskbarMetrics 修改启动项；\n" +
                 "2. 或手动把程序快捷方式放进启动文件夹：" + (folder ?? "（未找到）") + "\n" +
                 "3. 或用系统「任务计划程序」创建一条登录时运行的任务。");
+        }
+    }
+
+    // 程序本体的搬迁：复制 exe、改自启动指向、延后从新位置启动。
+    static class ProgramMover
+    {
+        public static string TargetExe(string targetDir)
+        {
+            return Path.Combine(targetDir, Path.GetFileName(Application.ExecutablePath));
+        }
+
+        // 把当前正在运行的程序复制到目标目录，返回新 exe 的完整路径。
+        public static string CopyTo(string targetDir)
+        {
+            Directory.CreateDirectory(targetDir);
+            string newExe = TargetExe(targetDir);
+            File.Copy(Application.ExecutablePath, newExe, true);
+            return newExe;
+        }
+
+        // 已开启自启动时，把启动项指向新位置。
+        public static void RepointAutoStart(string newExe)
+        {
+            if (AutoStart.IsEnabled()) AutoStart.SetEnabledAt(true, newExe);
+        }
+
+        // 本进程退出会释放单实例互斥体，所以延后再启动新位置，否则新进程会立刻退出。
+        public static void ScheduleRestart(string newExe, int delaySeconds)
+        {
+            if (delaySeconds < 1) delaySeconds = 1;
+            ProcessStartInfo info = new ProcessStartInfo();
+            info.FileName = "cmd.exe";
+            info.Arguments = "/c ping -n " + (delaySeconds + 1) + " 127.0.0.1 >nul & start \"\" \"" + newExe + "\"";
+            info.CreateNoWindow = true;
+            info.UseShellExecute = false;
+            info.WindowStyle = ProcessWindowStyle.Hidden;
+            Process.Start(info);
         }
     }
 
