@@ -111,6 +111,20 @@ namespace TaskbarMetrics
         public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
 
         [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder buffer, int maxCount);
+
+        public static string GetClassName(IntPtr hwnd)
+        {
+            if (hwnd == IntPtr.Zero) return "";
+            System.Text.StringBuilder buffer = new System.Text.StringBuilder(256);
+            GetClassName(hwnd, buffer, buffer.Capacity);
+            return buffer.ToString();
+        }
+
+        [DllImport("user32.dll")]
         public static extern bool IsWindowVisible(IntPtr hwnd);
 
         [DllImport("user32.dll")]

@@ -47,6 +47,7 @@ namespace TaskbarMetrics
         bool _dragMoved;
         bool _rendering;
         bool _hideLogged;
+        bool _coveredLogged;
         Point _dragOffset;
         int _lastX, _lastY, _lastWidth, _lastHeight;
         bool _lastTopMost = true;
@@ -380,6 +381,37 @@ namespace TaskbarMetrics
             return state == 3 || state == 4;
         }
 
+        // 前台是否是一个铺满整个屏幕的窗口。截图工具（Snipaste、微信、QQ 截图等）的截图层、
+        // 全屏游戏和全屏视频都属于这类；这时本窗口的置顶会压在它上面，得先让开。
+        bool IsScreenCoveredByForeground()
+        {
+            IntPtr hwnd = Native.GetForegroundWindow();
+            if (hwnd == IntPtr.Zero || hwnd == Handle) return false;
+            if (Native.IsChild(Handle, hwnd) || Native.IsChild(hwnd, Handle)) return false;
+
+            string cls = Native.GetClassName(hwnd);
+            if (string.Equals(cls, "Progman", StringComparison.OrdinalIgnoreCase)) return false;
+            if (string.Equals(cls, "WorkerW", StringComparison.OrdinalIgnoreCase)) return false;
+            if (string.Equals(cls, "Shell_TrayWnd", StringComparison.OrdinalIgnoreCase)) return false;
+            if (string.Equals(cls, "Shell_SecondaryTrayWnd", StringComparison.OrdinalIgnoreCase)) return false;
+
+            Native.RECT rect;
+            if (!Native.GetWindowRect(hwnd, out rect)) return false;
+
+            Rectangle bounds;
+            try
+            {
+                bounds = Screen.FromHandle(hwnd).Bounds;
+            }
+            catch
+            {
+                return false;
+            }
+
+            return rect.Left <= bounds.Left && rect.Top <= bounds.Top
+                && rect.Right >= bounds.Right && rect.Bottom >= bounds.Bottom;
+        }
+
         bool IsAutoHiddenTaskbar(Native.RECT taskbarRect)
         {
             Native.APPBARDATA appBar = new Native.APPBARDATA();
@@ -403,6 +435,21 @@ namespace TaskbarMetrics
         void ApplyPlacement(bool force)
         {
             if (_closing || IsDisposed || _dragging) return;
+
+            // 前台被全屏窗口盖住时先隐藏：截图工具的截图层和本窗口都是置顶，
+            // 而这里每 150ms 会把自己顶到最上层，会挡住选区、取色和滚动截图的界面。
+            if (IsScreenCoveredByForeground())
+            {
+                if (!_coveredLogged)
+                {
+                    _coveredLogged = true;
+                    AppLog.Info("Widget hidden: foreground covers screen (class="
+                        + Native.GetClassName(Native.GetForegroundWindow()) + ")");
+                }
+                HideWidget();
+                return;
+            }
+            _coveredLogged = false;
 
             int width, height, x, y;
 
